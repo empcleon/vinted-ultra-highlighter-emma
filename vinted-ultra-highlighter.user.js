@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Vinted Ultra Highlighter PRO + Config Panel – Emma Edition
+// @name         Vinted Ultra Highlighter PRO – Emma Edition (Mini/Micro + Marcas)
 // @namespace    https://github.com/empcleon/vinted-ultra-highlighter-emma
-// @version      3.5
-// @description  Resalta chollos en Vinted + Panel con control total (modos vestidos y zapatos 42 incluidos). Optimizado 2025.
+// @version      4.0
+// @description  Sniper avanzado para chollos en Vinted: vestidos mini/micro, zapatos 42, marcas TOP y panel completo.
 // @author       Emma
 // @match        https://www.vinted.es/*
 // @grant        GM_setValue
@@ -16,105 +16,81 @@
 (function() {
     'use strict';
 
-    console.log("🔥 Ultra Highlighter Emma Edition + Vestidos & Talla 42 cargado");
-
     const defaultConfig = {
         enabled: true,
         highlightColor: "#d6ffd8",
         borderColor: "#ff0000",
-        keywordHighlight: true,
-        priceHighlight: true,
         cheapLimit: 5,
-        scanInterval: 1200,
+        keywordHighlight: true,
         extraKeywords: "nuevo,etiqueta,urge,mudanza,error",
+        scanInterval: 1200,
         modeDressOnly: false,
-        modeShoes42: false
+        modeMiniOnly: false,
+        modeShoes42: false,
+        modeBrandFilter: false
     };
 
     const cfg = {...defaultConfig, ...GM_getValue("emmaConfig", {})};
-
     function saveConfig() { GM_setValue("emmaConfig", cfg); }
 
-    GM_registerMenuCommand("⚙️ Configuración Highlighter Emma", openConfigPanel);
+    GM_registerMenuCommand("⚙️ Configuración Highlighter Emma", openConfig);
 
-    function openConfigPanel() {
-
+    function openConfig() {
         if (document.querySelector("#emma-config-panel")) return;
 
         const panel = document.createElement("div");
         panel.id = "emma-config-panel";
         panel.style = `
-            position: fixed;
-            top: 50px;
-            right: 50px;
-            width: 360px;
-            background: #ffffff;
-            border-radius: 12px;
-            padding: 20px;
-            z-index: 9999999;
-            box-shadow: 0 0 20px rgba(0,0,0,0.2);
-            font-family: Arial, sans-serif;
+            position: fixed; top: 50px; right: 50px; width: 360px;
+            background: #fff; padding: 20px; border-radius: 12px;
+            z-index: 9999999; box-shadow: 0 0 15px rgba(0,0,0,0.3);
+            font-family: Arial;
         `;
 
         panel.innerHTML = `
-            <h2 style="margin-top:0;margin-bottom:10px;">⚙️ Configuración Emma</h2>
+            <h2>⚙️ Highlighter Emma</h2>
 
-            <label><input type="checkbox" id="emma_enabled"> Activar script</label><br><br>
+            <label><input type="checkbox" id="emma_enabled"> Activar</label><br><br>
 
-            <label><input type="checkbox" id="emma_modeDress"> Solo vestidos</label><br>
-            <small>Oculta todo lo que no sea vestido.</small><br><br>
+            <label><input type="checkbox" id="dress_only"> Solo vestidos</label><br><br>
 
-            <label><input type="checkbox" id="emma_modeShoes"> Zapatos talla 42</label><br>
-            <small>Resalta solo zapatos & tacones talla 42.</small><br><br>
+            <label><input type="checkbox" id="mini_only"> Solo mini/micro</label><br>
+            <small>Filtra vestidos ultracortos.</small><br><br>
+
+            <label><input type="checkbox" id="shoes42"> Zapatos talla 42</label><br><br>
+
+            <label><input type="checkbox" id="brand_mode"> Solo marcas TOP (H&M, Zara, Mango, Tally)</label><br><br>
 
             <hr>
 
-            <label>Color de resaltado:<br>
-                <input type="color" id="emma_color" value="${cfg.highlightColor}">
-            </label><br><br>
+            <label>Color resaltado:<br><input type="color" id="emma_color" value="${cfg.highlightColor}"></label><br><br>
+            <label>Borde chollo:<br><input type="color" id="emma_border" value="${cfg.borderColor}"></label><br><br>
 
-            <label>Color borde chollo:<br>
-                <input type="color" id="emma_borderColor" value="${cfg.borderColor}">
-            </label><br><br>
+            <label>Máx € chollo:<br><input type="number" id="price_limit" value="${cfg.cheapLimit}"></label><br><br>
 
-            <label>Palabras clave:<br>
-                <input type="text" id="emma_keywords" value="${cfg.extraKeywords}" style="width:100%;">
-            </label><br><br>
-
-            <label>Máx € chollo:<br>
-                <input type="number" id="emma_price" value="${cfg.cheapLimit}">
-            </label><br><br>
-
-            <label>Velocidad de escaneo (ms):<br>
-                <input type="number" id="emma_scan" value="${cfg.scanInterval}">
-            </label><br><br>
-
-            <button id="emma_save" style="padding:8px 15px;background:#28a745;color:white;border:none;border-radius:6px;cursor:pointer;">
-                Guardar
-            </button>
-
-            <button id="emma_close" style="padding:8px 15px;background:#dc3545;color:white;border:none;border-radius:6px;cursor:pointer;margin-left:10px;">
-                Cerrar
-            </button>
+            <button id="save" style="background:#28a745;color:white;padding:6px 12px;border-radius:6px;border:none;cursor:pointer;">Guardar</button>
+            <button id="close" style="background:#d9534f;color:white;padding:6px 12px;border-radius:6px;border:none;margin-left:10px;cursor:pointer;">Cerrar</button>
         `;
 
         document.body.appendChild(panel);
 
         document.querySelector("#emma_enabled").checked = cfg.enabled;
-        document.querySelector("#emma_modeDress").checked = cfg.modeDressOnly;
-        document.querySelector("#emma_modeShoes").checked = cfg.modeShoes42;
+        document.querySelector("#dress_only").checked = cfg.modeDressOnly;
+        document.querySelector("#mini_only").checked = cfg.modeMiniOnly;
+        document.querySelector("#shoes42").checked = cfg.modeShoes42;
+        document.querySelector("#brand_mode").checked = cfg.modeBrandFilter;
 
-        document.querySelector("#emma_close").onclick = () => panel.remove();
+        document.querySelector("#close").onclick = () => panel.remove();
 
-        document.querySelector("#emma_save").onclick = () => {
+        document.querySelector("#save").onclick = () => {
             cfg.enabled = document.querySelector("#emma_enabled").checked;
-            cfg.modeDressOnly = document.querySelector("#emma_modeDress").checked;
-            cfg.modeShoes42 = document.querySelector("#emma_modeShoes").checked;
+            cfg.modeDressOnly = document.querySelector("#dress_only").checked;
+            cfg.modeMiniOnly = document.querySelector("#mini_only").checked;
+            cfg.modeShoes42 = document.querySelector("#shoes42").checked;
+            cfg.modeBrandFilter = document.querySelector("#brand_mode").checked;
             cfg.highlightColor = document.querySelector("#emma_color").value;
-            cfg.borderColor = document.querySelector("#emma_borderColor").value;
-            cfg.extraKeywords = document.querySelector("#emma_keywords").value;
-            cfg.cheapLimit = parseFloat(document.querySelector("#emma_price").value);
-            cfg.scanInterval = parseInt(document.querySelector("#emma_scan").value);
+            cfg.borderColor = document.querySelector("#emma_border").value;
+            cfg.cheapLimit = parseFloat(document.querySelector("#price_limit").value);
 
             saveConfig();
             alert("Configuración guardada ✓");
@@ -122,65 +98,51 @@
         };
     }
 
-    //------------------------------------------------------
-    // FILTROS ESPECIALES
-    //------------------------------------------------------
-    const dressRegex = /\bvestid[oa]?\b|\bdress\b|\bmini\b|\bmicro\b/i;
+    //--------------------------------------------------------------------
+    // Filtros REGEX
+    //--------------------------------------------------------------------
 
-    const shoes42Regex =
-        /\b42\b|\btalla 42\b|\bsize 42\b|\beu 42\b|\buk 8\b/i;
+    const dressRegex = /\bvestid[oa]?\b|\bdress\b/i;
 
-    const shoeKeywords =
-        /\bzapatos?\b|\btacones?\b|\bbotas?\b|\bbotines?\b|\bheels\b|\bpumps\b/i;
+    const miniRegex = /\b(mini|micro|mini[-\s]?dress|minivestido|vestid[oa] (mini|corto)|bodycon|ultra mini)\b/i;
 
-    //------------------------------------------------------
-    // LÓGICA DE HIGHLIGHT
-    //------------------------------------------------------
+    const shoes42Regex = /\b(42|talla 42|size 42|eu 42|uk 8)\b/i;
+    const shoeKeywords = /\b(zapatos?|tacones?|botas?|botines?|heels|pumps)\b/i;
+
+    const brandRegex =
+        /\b(h[\W_]?&[\W_]?m|hm|h m|zara|zra|mango|mngo|tally ?we(ijl|ilj|ijl)|tally)\b/i;
+
+    //--------------------------------------------------------------------
+    // Highlight function
+    //--------------------------------------------------------------------
     function highlight() {
         if (!cfg.enabled) return;
 
-        const keywords = cfg.extraKeywords.split(",").map(k => k.trim().toLowerCase());
+        const items = document.querySelectorAll('.feed-grid__item, .WebItem_box__');
 
         const cheapRegex = new RegExp(`\\b([1-${cfg.cheapLimit}],\\d{2})\\s?€`, "i");
 
-        const items = document.querySelectorAll('.feed-grid__item, .WebItem_box__');
-
-        items.forEach(item => {
+        for (let item of items) {
             const text = item.innerText.toLowerCase();
 
-            // 🔵 Modo SOLO VESTIDOS
-            if (cfg.modeDressOnly && !dressRegex.test(text)) return;
+            if (cfg.modeDressOnly && !dressRegex.test(text)) continue;
 
-            // 👠 Modo ZAPATOS TALLA 42
+            if (cfg.modeMiniOnly && !miniRegex.test(text)) continue;
+
             if (cfg.modeShoes42) {
-                if (!shoes42Regex.test(text)) return;
-                if (!shoeKeywords.test(text)) return;
+                if (!shoes42Regex.test(text)) continue;
+                if (!shoeKeywords.test(text)) continue;
             }
 
-            if (item.dataset._highlighted) return;
-            item.dataset._highlighted = "true";
+            if (cfg.modeBrandFilter && !brandRegex.test(text)) continue;
 
-            // 🔴 Precio chollo
-            if (cfg.priceHighlight && cheapRegex.test(text)) {
+            if (cheapRegex.test(text)) {
                 item.style.border = `3px solid ${cfg.borderColor}`;
-                item.style.borderRadius = "6px";
             }
 
-            // 🟢 Palabras clave
-            if (cfg.keywordHighlight) {
-                for (let w of keywords) {
-                    if (text.includes(w)) {
-                        item.style.backgroundColor = cfg.highlightColor;
-                        item.style.padding = "4px";
-                        break;
-                    }
-                }
-            }
-        });
+            item.style.backgroundColor = cfg.highlightColor;
+        }
     }
 
     setInterval(highlight, cfg.scanInterval);
 })();
-
-})();
-
