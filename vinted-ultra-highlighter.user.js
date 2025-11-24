@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Vinted MEGA-SNIPER PRO v18.1 AISTUDIO- HYBRID (Script + App Conector)
+// @name         Vinted MEGA-SNIPER PRO v34.0 - REAL SHIPPING (Precision Finance)
 // @namespace    https://github.com/empcleon/vinted-megasniper-pro
-// @version      18.1
-// @description  El puente perfecto: Detecta visualmente y envía a tu App con un clic para análisis IA.
+// @version      34.0
+// @description  Lee el coste de envío EXACTO de la ficha (detecta Gratis/Ofertas) para calcular el Precio Final Real.
 // @author       Emma
 // @match        https://www.vinted.es/*
 // @match        https://www.vinted.fr/*
@@ -21,46 +21,508 @@
 (function() {
     'use strict';
 
-    const defaultConfig = {
-        enabled: true,
-        minScore: 45,
-        scanInterval: 800,
-        modeMini: true,
-        modeExtreme: false,
-        modeTrends: true,
-        modeLuxury: true,
-        modeUrgent: true,
-        modeGhosting: true,
-        modeSound: true,
-        apiUrl: "http://localhost:3000/api/sniper", // 🔌 TU APP AQUÍ
-        colorLow: "#4caf50",
-        colorMid: "#ff9800",
-        colorHigh: "#f44336",
-        colorExtreme: "#ff00de",
-        colorTrend: "#9c27b0"
+    // =================================================================
+    // 1. CONFIGURACIÓN & MATRICES
+    // =================================================================
+    const BRAND_TIERS = {
+        TRASH: { regex: /\b(shein|primark|aliexpress|cider|temu|boohoo|kiabi|lefties|zeeman|action|atmosphere|tex|easy wear|florence|in extenso|clockhouse)\b/i, basePrice: 3, penalty: 100 },
+        LOW: { regex: /\b(zara|bershka|stradivarius|pull[\W_]?&[\W_]?bear|h[\W_]?&[\W_]?m|mango|sfera|springfield|morgan|naf[\W_]?naf|etam|cache[\W_]?cache|pimkie|promod|inside|new yorker|only|vero moda|la boutique|most wanted|jennyfer|new look|parfois|tezenis)\b/i, basePrice: 12, penalty: 40 },
+        MID: { regex: /\b(nike|adidas|levis|levi[\W_]?s|converse|vans|puma|diesel|guess|desigual|bimba[\W_]?y[\W_]?lola|massimo[\W_]?dutti|pepe[\W_]?jeans|tommy|calvin klein|porter|vila|kookai)\b/i, basePrice: 20, bonus: 10 },
+        GOD: { regex: /\b(stussy|carhartt|north[\W_]?face|patagonia|arc[\W_]?teryx|stone[\W_]?island|dr[\W_]?martens|ralph[\W_]?lauren|lacoste|maje|sandro|sezane|zadig|ganni|reformation|diesel vintage)\b/i, basePrice: 45, bonus: 30 }
     };
 
-    const cfg = {...defaultConfig, ...GM_getValue("emmaConfig", {})};
+    const CATEGORIES = {
+        COAT: { regex: /\b(abrigo|chaqueta|cazadora|coat|manteau|veste|blouson|plumas|puffer|trench|gabardina|bomber|leather jacket|cuero)\b/i, multiplier: 3.0 },
+        SHOES: { regex: /\b(zapatos|botas|botines|shoes|boots|bottes|bottines|zapatillas|sneakers|baskets|sandalias|sandales|heels|tacones)\b/i, multiplier: 2.0 },
+        CORSET: { regex: /\b(corset|corsé|bustier|lencero|lenceria|bodysuit|body|top lencero)\b/i, multiplier: 1.5 },
+        TOP: { regex: /\b(top|t-shirt|camiseta|camisa|shirt|chemise|crop|tank)\b/i, multiplier: 0.8 },
+        STANDARD: { multiplier: 1.0 }
+    };
+
+    const VISUAL_DICT = {
+        HOME: /\b(mirror|espejo|miroir|bedroom|chambre|habitaci[oó]n|door|puerta|porte|carpet|tapis|alfombra|curtain|cortina|indoor|interior|selfie)\b/i,
+        STUDIO: /\b(studio|estudio|white background|fond blanc|fondo blanco|hanger|percha|cintre|clothing rack|mannequin|maniqui|isolated)\b/i,
+        POSE: /\b(posing|posant|posando|standing|debout|de pie|human|humano|body|corps|cuerpo|waist|cintura|leg|pierna|jambe|thigh|muslo)\b/i,
+        SEXY_ALT: /\b(cleavage|escote|decollete|open back|backless|dos nu|espalda|tight|ajustado|moulant|slim fit|short|mini|courte|slit|fente|apertura)\b/i,
+        NIGHT: /\b(sparkling|brillante|glitter|sequin|lentejuela|party|fiesta|fete|evening|noche|soir|night)\b/i,
+        WARM_LIGHT: /\b(warm|calida|yellow|amarilla|home light|luz casa|golden)\b/i,
+        COLORS: /\b(red|rouge|rojo|pink|rose|rosa|fucsia|gold|or|dorado|silver|argent|plata)\b/i,
+        LEGS: /\b(leg|legs|piernas?|jambes?|thigh|cuisse|knees|rodillas)\b/i
+    };
+
+    const defaultConfig = {
+        enabled: true, minScore: 45, scanInterval: 800,
+        modeMini: true, modeExtreme: false, modeTrends: true, modeLuxury: true,
+        modeUrgent: true, modeGhosting: true, modeSizeL: true, modeHomeDetector: true, modeAntiStudio: true,
+        apiUrl: "http://localhost:3000/api/sniper",
+        colorLow: "#4caf50", colorMid: "#ff9800", colorHigh: "#f44336", colorExtreme: "#ff00de", colorTrend: "#9c27b0"
+    };
+
+    let cfg = { ...defaultConfig, ...GM_getValue("emmaConfig", {})};
     function saveConfig() { GM_setValue("emmaConfig", cfg); }
 
-    // --- ESTADÍSTICAS ---
-    function getToday() { return new Date().toISOString().split('T')[0]; }
-    let stats = GM_getValue("dailyStatsV18", {date: getToday(), count: 0, total: 0, best: 0});
-    if (stats.date !== getToday()) { stats = {date: getToday(), count: 0, total: 0, best: 0}; GM_setValue("dailyStatsV18", stats); }
-
-    function addToStats(score, price) {
-        stats.count++;
-        stats.total += price;
-        if (score > stats.best) stats.best = score;
-        GM_setValue("dailyStatsV18", stats);
+    // ========================================
+    // 2. UTILIDADES
+    // ========================================
+    function parsePrice(str) { 
+        if (!str) return 0;
+        // Limpieza agresiva para obtener solo el número
+        const cleanStr = str.replace(/[^0-9.,]/g, ''); 
+        return parseFloat(cleanStr.replace(',', '.')) || 0; 
     }
 
-    const ALERT_SOUND = new Audio('data:audio/wav;base64,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');
-    const emmaCache = new Set();
+    function extractSize(item) {
+        const sizeAttr = item.querySelector('[data-testid*="size"], [itemprop="size"]');
+        return sizeAttr ? sizeAttr.innerText.trim().toUpperCase() : "";
+    }
 
-    GM_registerMenuCommand("⚙️ Configuración", openConfig);
-    GM_registerMenuCommand("📊 Estadísticas", showStats);
-    GM_registerMenuCommand("🗑️ Restaurar ocultos", clearHidden);
+    function getPriceSafely(context) {
+        const priceEl = 
+            context.querySelector("[data-testid='item-price']") ||
+            context.querySelector(".item-price__price") ||
+            context.querySelector("[itemprop='price']") ||
+            context.querySelector(".price__value") ||
+            context.querySelector("h3[class*='price']") || 
+            null;
+        if (!priceEl) return 0;
+        return parsePrice(priceEl.innerText);
+    }
+
+    // 🔍 DETECTOR DE ENVÍO REAL
+    function getRealShippingCost() {
+        // Buscamos selectores donde Vinted muestra el envío
+        const shippingElements = document.querySelectorAll("[data-testid*='shipping'], .item-shipping-methods__price, .shipping-option__price");
+        
+        let prices = [];
+        let foundFree = false;
+
+        shippingElements.forEach(el => {
+            const text = el.innerText.toLowerCase();
+            if (text.includes("gratis") || text.includes("gratuit") || text.includes("0,00") || text.includes("0.00")) {
+                foundFree = true;
+            } else {
+                const p = parsePrice(text);
+                if (p > 0) prices.push(p);
+            }
+        });
+
+        if (foundFree) return 0;
+        if (prices.length > 0) return Math.min(...prices); // Devolvemos el más barato
+        
+        return null; // No encontrado
+    }
+
+    // 🧮 CALCULADORA FINANCIERA INTELIGENTE
+    function calculateTotalCost(itemPrice, packageSizeText) {
+        // 1. Tasa Protección
+        const protectionFee = 0.70 + (itemPrice * 0.05);
+        
+        // 2. Envío (Real o Estimado)
+        let shippingCost = getRealShippingCost();
+
+        if (shippingCost === null) {
+            // Fallback: Estimación por tamaño si no vemos el envío real
+            shippingCost = 3.79; 
+            const sizeTxt = (packageSizeText || "").toLowerCase();
+            if (sizeTxt.match(/media|moyen|medium/)) shippingCost = 4.99;
+            if (sizeTxt.match(/grand|large/)) shippingCost = 6.99;
+        }
+        
+        return (itemPrice + protectionFee + shippingCost).toFixed(2);
+    }
+
+    // ========================================
+    // 3. MOTOR DE PUNTUACIÓN
+    // ========================================
+    function calculateScore(fullText, price, sizeData, imgElement, timeText = "") {
+        let score = 50;
+        let reasons = [];
+        let isGhost = false;
+        let isExtremeMatch = false;
+        let sizeUpper = (sizeData || "").toUpperCase().trim();
+        const text = fullText.toLowerCase().replace(/\s+/g, ' '); 
+
+        // A. MARCA & CATEGORÍA
+        let brandTier = "NONE";
+        let baseLimit = 15;
+        let penaltyVal = 0;
+        let bonusVal = 0;
+
+        if (BRAND_TIERS.TRASH.regex.test(text)) { brandTier = "TRASH"; baseLimit = 3; penaltyVal = 100; }
+        else if (BRAND_TIERS.LOW.regex.test(text)) { brandTier = "LOW"; baseLimit = 12; penaltyVal = 40; }
+        else if (BRAND_TIERS.MID.regex.test(text)) { brandTier = "MID"; baseLimit = 20; bonusVal = 10; }
+        else if (BRAND_TIERS.GOD.regex.test(text)) { brandTier = "GOD"; baseLimit = 45; bonusVal = 30; }
+
+        let catMult = 1.0;
+        let catName = "";
+        if (CATEGORIES.COAT.regex.test(text)) { catMult = 3.0; catName = "ABRIGO"; }
+        else if (CATEGORIES.SHOES.regex.test(text)) { catMult = 2.0; catName = "ZAPATO"; }
+        else if (CATEGORIES.CORSET.regex.test(text)) { catMult = 1.5; catName = "CORSET"; }
+        else if (CATEGORIES.TOP.regex.test(text)) { catMult = 0.8; catName = "TOP"; }
+
+        let matBonus = 0;
+        if (/\b(lana|seda|cuero|piel|wool|silk|leather)\b/i.test(text)) { matBonus = 10; reasons.push("💎MAT"); }
+        
+        let dynamicLimit = (baseLimit * catMult) + matBonus;
+
+        // B. ESTADO
+        const isNew = /\b(nuevo|etiqueta|neuf|bnwt)\b/i.test(text);
+        if (isNew) { dynamicLimit = dynamicLimit * 1.3; score += 15; reasons.push("🏷️NUEVO"); }
+        else if ((brandTier === "TRASH" || brandTier === "LOW") && !isNew) {
+            dynamicLimit = dynamicLimit * 0.85; 
+        }
+
+        // C. VISUAL
+        let isHomePhoto = false;
+        let isSexyAlt = false;
+        
+        if (imgElement) {
+            try {
+                const alt = (imgElement.alt || "").toLowerCase();
+                const h = imgElement.naturalHeight || 0;
+                const w = imgElement.naturalWidth || 0;
+                const ratio = (h && w) ? h / w : 0;
+
+                if (VISUAL_DICT.POSE.test(alt)) { score += 20; reasons.push("📸POSE"); }
+                if (VISUAL_DICT.LEGS.test(alt)) { score += 15; reasons.push("🦵LEGS"); }
+                if (VISUAL_DICT.HOME.test(alt)) { score += 15; reasons.push("🏠CASA"); isHomePhoto = true; }
+                if (VISUAL_DICT.SEXY_ALT.test(alt)) { score += 25; reasons.push("🔥AI-SEXY"); isSexyAlt = true; }
+                if (VISUAL_DICT.COLORS.test(alt)) { score += 10; reasons.push("🎨COLOR"); }
+                
+                if (ratio > 0.70 && ratio < 1.40 && (alt.includes("mini") || alt.includes("short") || text.includes("mini"))) {
+                    score += 15; reasons.push("📏MINI-REAL"); 
+                }
+                if (cfg.modeAntiStudio && VISUAL_DICT.STUDIO.test(alt)) {
+                    score -= 50; reasons.push("⛔CATALOGO"); isGhost = true;
+                }
+            } catch(e){}
+        }
+
+        // D. PRECIO
+        if (brandTier !== "NONE") {
+            score += bonusVal;
+            if (brandTier === "GOD") { reasons.push("💎TIER-S"); isExtremeMatch = true; }
+            
+            if (price > dynamicLimit) {
+                score -= 30;
+                if (brandTier === "TRASH" || brandTier === "LOW") { 
+                    score -= penaltyVal; reasons.push(`💸CARO`); isGhost = true; 
+                } else { 
+                    reasons.push("💸ALTO"); 
+                }
+            } else {
+                if (price <= dynamicLimit * 0.5) { score += 20; reasons.push("🦄GANGA"); }
+                else { score += 5; reasons.push("✅PRECIO"); }
+            }
+        }
+
+        // E. EXTRAS
+        const reSexy = /\b(mini|micro|ajustado|bodycon|sexy|escote|espalda|cut[- ]?out)\b/i;
+        const isL = /\b(L|40|42)\b/i.test(sizeUpper);
+
+        if (reSexy.test(text) || catName === "CORSET") { score += 10; reasons.push("🔥TXT-SEXY"); }
+        
+        if (cfg.modeSizeL && isL) {
+            score += 15; reasons.push("🍑CURVY-L");
+            if (isSexyAlt || reSexy.test(text) || reasons.includes("📸POSE")) {
+                score += 25; reasons.push("💥CURVY-PLUS"); isExtremeMatch = true;
+            }
+        }
+
+        if (/\b(min|minutos|seg|segundos|ahora|instant|now)\b/i.test(timeText)) {
+            score += 20; reasons.push("⚡FRESH"); isExtremeMatch = true;
+        }
+
+        if (price < 5 && price > 0 && !isGhost) { score += 10; reasons.push("💰<5€"); }
+
+        if (cfg.modeGhosting && isGhost) {
+            if (isHomePhoto && (isSexyAlt || reasons.includes("📸POSE")) && price < 10) {
+                return { score: 65, reasons: ["⚠️HIDDEN-GEM", ...reasons], isGhost: false };
+            }
+            return { score: 0, reasons, isGhost: true };
+        }
+
+        return { score: Math.min(Math.max(score, 0), 100), reasons, isGhost, isExtremeMatch };
+    }
+
+    // ========================================
+    // 4. CONEXIÓN APP
+    // ========================================
+    function sendToApp(data, btn) {
+        btn.innerText = "⏳...";
+        GM_xmlhttpRequest({
+            method: "POST", url: cfg.apiUrl, headers: { "Content-Type": "application/json" }, data: JSON.stringify(data),
+            onload: function(response) {
+                if (response.status >= 200 && response.status < 300) { btn.innerText = "✅"; btn.style.background = "#4caf50"; } 
+                else { btn.innerText = "❌"; }
+                setTimeout(() => btn.innerText = "🤖", 3000);
+            },
+            onerror: function(err) { btn.innerText = "🔌"; alert("App desconectada."); }
+        });
+    }
+
+    // ========================================
+    // 5. MODO CATÁLOGO
+    // ========================================
+    const emmaCache = new Set();
+    function runGridMode() {
+        const items = document.querySelectorAll('[data-testid="grid-item"]');
+        items.forEach(item => {
+            try {
+                const link = item.querySelector('a');
+                if (!link) return;
+                const itemId = link.href;
+                if (emmaCache.has(itemId)) return;
+                emmaCache.add(itemId);
+
+                if (GM_getValue("hidden_" + itemId, false)) { item.style.display = "none"; return; }
+
+                let rawText = item.innerText.toLowerCase();
+                rawText = rawText.replace(/incluye protección.*/g, "").replace(/[0-9]+[.,][0-9]+ ?€/g, ""); 
+                
+                const img = item.querySelector('img');
+                const fullText = rawText + " " + (img?.alt?.toLowerCase() || "");
+                const price = getPriceSafely(item); 
+                const sizeData = extractSize(item);
+                const imgSrc = img?.src || "";
+                const timeText = item.innerText; 
+
+                if (/\b(niña|niño|bebe|infantil|kids)\b/i.test(fullText) && !fullText.includes("vest")) return;
+
+                const { score, reasons, isGhost, isExtremeMatch } = calculateScore(fullText, price, sizeData, img, timeText);
+
+                if (isGhost) { item.style.opacity = "0.2"; item.style.filter = "grayscale(100%)"; item.style.pointerEvents = "none"; return; }
+                if (score < cfg.minScore) return;
+
+                let borderColor = isExtremeMatch || score >= 90 ? cfg.colorExtreme : "transparent";
+                let bg = score >= 70 ? cfg.colorMid : cfg.colorLow;
+                if (isExtremeMatch) bg = cfg.colorExtreme;
+                if (reasons.includes("⚡FRESH")) borderColor = "#00ff00";
+
+                item.style.background = `linear-gradient(135deg, ${bg}15 0%, #ffffff00 90%)`;
+                item.style.border = `2px solid ${borderColor}`;
+                item.style.borderRadius = "10px";
+                item.style.position = "relative";
+
+                if (!item.querySelector('.emma-score')) {
+                    const b = document.createElement("div"); b.className = "emma-score"; b.innerText = score;
+                    b.style = `position:absolute;top:6px;right:6px;background:#000a;color:white;padding:4px 8px;border-radius:8px;font-size:12px;font-weight:bold;z-index:10;`;
+                    item.appendChild(b);
+                }
+                if (!item.querySelector('.emma-tags') && reasons.length > 0) {
+                    const t = document.createElement("div"); t.className = "emma-tags"; t.innerText = reasons.join(" ");
+                    t.style = `position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,0.8);color:white;padding:2px 5px;border-radius:6px;font-size:10px;max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:10;`;
+                    item.appendChild(t);
+                }
+                if (!item.querySelector('.emma-ai-btn')) {
+                    const aiBtn = document.createElement("button"); aiBtn.className = "emma-ai-btn"; aiBtn.innerText = "🤖";
+                    aiBtn.style = `position:absolute; bottom:6px; right:45px; background:#673ab7; color:white; border:none; padding:4px 8px; cursor:pointer; border-radius:6px; font-size:12px; z-index:20;`;
+                    aiBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); sendToApp({ url: itemId, price, title: fullText, score, img: imgSrc, size: sizeData, reasons }, aiBtn); };
+                    item.appendChild(aiBtn);
+                }
+                if (!item.querySelector('.emma-hide')) {
+                    const hideBtn = document.createElement("button"); hideBtn.className = "emma-hide"; hideBtn.innerText = "❌";
+                    hideBtn.style = `position:absolute;top:6px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.6);color:white;border:none;padding:2px 6px;cursor:pointer;border-radius:4px;font-size:10px;z-index:20;`;
+                    hideBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); item.style.display = "none"; GM_setValue("hidden_" + itemId, true); };
+                    item.appendChild(hideBtn);
+                }
+            } catch(e) { console.error("Grid Error", e); }
+        });
+    }
+
+    // ========================================
+    // 6. MODO FORENSE (FICHA)
+    // ========================================
+    let forensicAnalyzed = false;
+
+    function runForensicMode() {
+        if (forensicAnalyzed) return;
+        
+        const titleEl = document.querySelector("[property='og:title']");
+        const mainImg = document.querySelector(".item-photo--1 img") || document.querySelector("[data-testid='item-photo'] img");
+        const price = getPriceSafely(document);
+
+        if (!titleEl || !mainImg) return;
+
+        forensicAnalyzed = true;
+
+        let jsonData = {};
+        try {
+            const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+            for (let s of scripts) {
+                const j = JSON.parse(s.innerText);
+                if (j['@type'] === 'Product') { jsonData = j; break; }
+            }
+        } catch(e){}
+
+        const title = titleEl.content || "";
+        const desc = document.querySelector("[data-testid='item-description']")?.innerText || jsonData.description || "";
+        const imgSrc = mainImg.src || "";
+        
+        let brand = jsonData.brand?.name || "";
+        let size = "", status = "", color = jsonData.color || "";
+        let packageSize = "Mediano (Est.)";
+
+        document.querySelectorAll(".details-list__item").forEach(row => {
+            const label = row.querySelector(".details-list__item-title")?.innerText.toLowerCase() || "";
+            const value = row.querySelector(".details-list__item-value")?.innerText || "";
+            if (!brand && (label.match(/marca|marque|brand/))) brand = value;
+            if (label.match(/talla|taille|size/)) size = value;
+            if (label.match(/estado|état|condition/)) status = value;
+            if (label.match(/tamaño del paquete|format du colis/)) packageSize = value;
+        });
+
+        const fullText = `${title} ${desc} ${brand} ${size} ${status} ${color}`.toLowerCase();
+        const { score, reasons, isExtremeMatch } = calculateScore(fullText, price, size, mainImg);
+
+        const totalCost = calculateTotalCost(price, packageSize);
+
+        renderForensicPanel(score, reasons, isExtremeMatch, price, totalCost, brand, {
+            url: window.location.href, price, title: fullText, score, img: imgSrc, size, reasons
+        });
+    }
+
+    function renderForensicPanel(score, reasons, isExtreme, price, totalCost, brand, itemData) {
+        if (document.getElementById("emma-forensic-panel")) return;
+
+        const panel = document.createElement("div");
+        panel.id = "emma-forensic-panel";
+        let color = score >= 85 ? cfg.colorHigh : (score >= 50 ? cfg.colorMid : cfg.colorLow);
+        if (isExtreme) color = cfg.colorExtreme;
+
+        panel.innerHTML = `
+            <div style="font-family:Arial; color:white;">
+                <h2 style="margin:0 0 10px 0; text-align:center; color:${color}; text-shadow: 0 0 10px ${color};">🕵️‍♀️ ANÁLISIS V34</h2>
+                
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
+                    <div style="font-size:36px; font-weight:bold; color:${color};">${score}</div>
+                    <div style="text-align:right;">
+                        <div style="font-size:12px; color:#aaa;">${brand || "Marca?"}</div>
+                        <div style="font-size:20px; font-weight:bold;">${price}€</div>
+                    </div>
+                </div>
+
+                <div style="background:#222; padding:8px; border-radius:6px; margin-bottom:10px; border:1px solid #444;">
+                    <div style="font-size:11px; color:#aaa; text-align:center;">PRECIO TOTAL (aprox)</div>
+                    <div style="font-size:16px; font-weight:bold; text-align:center; color:${totalCost > 15 ? '#ff5252' : '#69f0ae'};">
+                        ${totalCost}€
+                    </div>
+                </div>
+
+                <div style="background:#333; padding:10px; border-radius:8px; margin-bottom:10px;">
+                    ${reasons.map(r => `<span style="display:inline-block; background:#000; color:#fff; padding:3px 6px; margin:2px; border-radius:4px; font-size:11px; border:1px solid #555;">${r}</span>`).join("")}
+                </div>
+
+                <button id="forensic-btn" style="width:100%; background:#673ab7; color:white; border:none; padding:10px; cursor:pointer; border-radius:6px; font-weight:bold; margin-bottom:10px;">
+                    🤖 ENVIAR A APP
+                </button>
+                <button id="emma-close-forensic" style="width:100%; background:#444; color:white; border:none; padding:8px; cursor:pointer; border-radius:6px;">Cerrar Panel</button>
+            </div>
+        `;
+
+        panel.style = `position: fixed; top: 100px; right: 20px; width: 280px; background: rgba(0,0,0,0.9); padding: 20px; border-radius: 12px; border: 2px solid ${color}; z-index: 999999;`;
+        document.body.appendChild(panel);
+        
+        document.getElementById('forensic-btn').onclick = (e) => { sendToApp(itemData, e.target); };
+        document.getElementById('emma-close-forensic').onclick = () => panel.remove();
+    }
+
+    // ========================================
+    // 7. CONFIG
+    // ========================================
+    function createFloatingBtn() {
+        if (document.getElementById('emma-float-btn')) return;
+        const btn = document.createElement("button");
+        btn.id = 'emma-float-btn'; btn.innerText = "⚙️";
+        btn.style = `position: fixed; bottom: 20px; right: 20px; width: 50px; height: 50px; background: #09B1BA; color: white; border-radius: 50%; border: none; box-shadow: 0 4px 10px rgba(0,0,0,0.3); font-size: 24px; cursor: pointer; z-index: 999999;`;
+        btn.onclick = openConfig;
+        document.body.appendChild(btn);
+    }
+
+    function openConfig() {
+        if (document.querySelector("#emma-panel")) return;
+        const p = document.createElement("div"); p.id = "emma-panel";
+        p.style = "position:fixed;top:10px;right:10px;width:340px;background:#fff;padding:20px;border:3px solid #09B1BA;z-index:999999;border-radius:10px;max-height:90vh;overflow-y:auto;";
+        p.innerHTML = `
+            <h3 style="margin:0 0 12px 0;color:#09B1BA;text-align:center;">🎯 V34.0 REAL SHIPPING</h3>
+            <label><input type="checkbox" id="c_en"> 🟢 Activar</label><br><br>
+            <div style="background:#eee;padding:10px;border-radius:6px;margin-bottom:10px;">
+                <strong>💰 Cálculo Real:</strong><br>
+                Detecta Envío Gratis o Precio Exacto.<br>
+            </div>
+            <label><input type="checkbox" id="c_home"> 🏠 Detector Casa</label><br>
+            <label><input type="checkbox" id="c_studio"> 🚫 Anti-Catálogo</label><br>
+            <label><input type="checkbox" id="c_mini"> 👗 Vestidos & Sexy</label><br>
+            <label><input type="checkbox" id="c_sizeL"> 🍑 <b>Curvy+ (L)</b></label><br>
+            <label><input type="checkbox" id="c_extreme"> 🔥 Modo Extreme</label><br>
+            <label><input type="checkbox" id="c_trends"> ✨ Tendencias</label><br>
+            <label><input type="checkbox" id="c_luxury"> 💎 Lujo</label><br>
+            <label><input type="checkbox" id="c_ghost"> 👻 Ocultar Sobreprecio</label><br>
+            <label>🔌 App URL:</label><br>
+            <input type="text" id="c_api" value="${cfg.apiUrl}" style="width:100%;border:1px solid #ccc;"><br><br>
+            <div style="text-align:center;">
+                <button id="b_save" style="background:#09B1BA;color:white;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;">GUARDAR</button>
+                <button id="b_close" style="background:#ccc;border:none;padding:8px 10px;border-radius:6px;margin-left:5px;cursor:pointer;">Cerrar</button>
+            </div>
+        `;
+        document.body.appendChild(p);
+
+        document.getElementById('c_en').checked = cfg.enabled;
+        document.getElementById('c_mini').checked = cfg.modeMini;
+        document.getElementById('c_sizeL').checked = cfg.modeSizeL;
+        document.getElementById('c_extreme').checked = cfg.modeExtreme;
+        document.getElementById('c_trends').checked = cfg.modeTrends;
+        document.getElementById('c_luxury').checked = cfg.modeLuxury;
+        document.getElementById('c_ghost').checked = cfg.modeGhosting;
+        document.getElementById('c_home').checked = cfg.modeHomeDetector;
+        document.getElementById('c_studio').checked = cfg.modeAntiStudio;
+        document.getElementById('c_api').value = cfg.apiUrl;
+
+        document.getElementById('b_save').onclick = () => {
+            cfg.enabled = document.getElementById('c_en').checked;
+            cfg.modeMini = document.getElementById('c_mini').checked;
+            cfg.modeSizeL = document.getElementById('c_sizeL').checked;
+            cfg.modeExtreme = document.getElementById('c_extreme').checked;
+            cfg.modeTrends = document.getElementById('c_trends').checked;
+            cfg.modeLuxury = document.getElementById('c_luxury').checked;
+            cfg.modeGhosting = document.getElementById('c_ghost').checked;
+            cfg.modeHomeDetector = document.getElementById('c_home').checked;
+            cfg.modeAntiStudio = document.getElementById('c_studio').checked;
+            cfg.apiUrl = document.getElementById('c_api').value;
+            saveConfig();
+            alert("✅ Configuración guardada");
+            p.remove();
+        };
+        document.getElementById('b_close').onclick = () => p.remove();
+    }
+
+    // ========================================
+    // 8. LOOP MAESTRO
+    // ========================================
+    let currentPath = window.location.pathname;
+    
+    function masterLoop() {
+        if (!cfg.enabled) return;
+        createFloatingBtn();
+
+        if (window.location.pathname !== currentPath) {
+            currentPath = window.location.pathname;
+            forensicAnalyzed = false;
+            const oldPanel = document.getElementById("emma-forensic-panel");
+            if(oldPanel) oldPanel.remove();
+        }
+
+        if (window.location.href.includes("/items/")) {
+            runForensicMode();
+        } else {
+            runGridMode();
+        }
+    }
+
+    setInterval(masterLoop, 1000);
+    console.log("✅ V34.0 REAL SHIPPING - READY");
+
+})();    GM_registerMenuCommand("🗑️ Restaurar ocultos", clearHidden);
 
     // ========================================
     // UTILIDADES
